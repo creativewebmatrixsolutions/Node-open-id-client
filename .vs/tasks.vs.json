@@ -1,0 +1,10 @@
+{
+  "tasks": [
+    {
+      "appliesTo": ".github/ISSUE_TEMPLATE/",
+      "taskLabel": "task-ISSUE_TEMPLATE",
+      "type": "launch"
+    }
+  ],
+  "version": "0.2.1"
+}

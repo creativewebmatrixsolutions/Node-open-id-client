@@ -1,0 +1,176 @@
+name: Continuous Integration
+
+on:
+  push:
+    paths-ignore:
+      - '**.md'
+  pull_request:
+    paths-ignore:
+      - '**.md'
+  schedule:
+    - cron:  0 10 * * 1-5
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@master
+      - name: Setup node
+        uses: actions/setup-node@v2-beta
+        with:
+          node-version: 12
+      - name: Store node version variable
+        id: node
+        run: |
+          echo "::set-output name=version::$(node -v)"
+      - name: Cache node_modules
+        uses: actions/cache@v2
+        id: node_modules
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node_modules-${{ hashFiles('**/package.json') }}-${{ steps.node.outputs.version }}
+      - name: Install dependencies
+        run: npx panva/npm-install-retry
+        if: ${{ steps.node_modules.outputs.cache-hit != 'true' }}
+      - run: npm run lint
+      - run: npm run lint-ts
+
+  test:
+    name: Node Tests + Coverage
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        node-version:
+          - 10.19.0
+          - 10
+          - 12.0.0
+          - 12
+          - 13.7.0
+          - 13
+          - 14.2.0
+          - 14
+        os:
+          - ubuntu-latest
+          - windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@master
+      - name: Setup node
+        uses: actions/setup-node@v2-beta
+        with:
+          node-version: ${{ matrix.node-version }}
+      - name: Store node version variable
+        id: node
+        run: |
+          echo "::set-output name=version::$(node -v)"
+      - name: Cache node_modules
+        uses: actions/cache@v2
+        id: node_modules
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node_modules-${{ hashFiles('**/package.json') }}-${{ steps.node.outputs.version }}
+      - name: Install dependencies
+        run: npx panva/npm-install-retry
+        if: ${{ steps.node_modules.outputs.cache-hit != 'true' }}
+      - run: npm run coverage
+      - env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        run: npx codecov
+
+  electron:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        electron-version:
+          - 6.0.0
+          - 6
+          - 7.0.0
+          - 7
+          - 8.0.0
+          - 8
+          - 9.0.0
+          - 9
+          - 10.0.0
+          - 10
+        os:
+          - ubuntu-latest
+          - windows-latest
+    steps:
+      - uses: actions/checkout@master
+      - uses: actions/setup-node@v1
+        with:
+          node-version: 12
+      - name: Store node version variable
+        id: node
+        run: |
+          echo "::set-output name=version::$(node -v)"
+      - name: Cache node_modules
+        uses: actions/cache@v2
+        id: node_modules
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node_modules-${{ hashFiles('**/package.json') }}-${{ steps.node.outputs.version }}
+      - name: Install dependencies
+        run: npx panva/npm-install-retry
+        if: ${{ steps.node_modules.outputs.cache-hit != 'true' }}
+      - run: npx xvfb-maybe npx electron@${{ matrix.electron-version }} ./test/electron test/**/*.test.js
+
+  oidc-conformance:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          docker pull panvafs/oidc-certification-rp-ci
+          docker run -d -p 8080:8080 panvafs/oidc-certification-rp-ci
+          while ! curl -sk https://127.0.0.1:8080 >/dev/null; do sleep 2; done
+      - run: git clone --single-branch --branch v4.x https://github.com/panva/openid-client-conformance-tests.git .
+      - uses: actions/setup-node@v1
+        with:
+          node-version: 12
+      - run: npx panva/npm-install-retry
+      - run: npm install ${{ github.repository }}#${{ github.sha }}
+      - run: npm run test
+        env:
+          ISSUER: https://localhost:8080
+          NODE_TLS_REJECT_UNAUTHORIZED: 0
+          CI: true
+
+  fapi-conformance:
+    runs-on: ubuntu-latest
+    steps:
+      - run: git clone https://gitlab.com/openid/conformance-suite.git
+      - env:
+          MAVEN_CACHE: ./m2
+        run: |
+          git checkout release-v4.0.10
+          sed -i -e 's/localhost/localhost.emobix.co.uk/g' src/main/resources/application.properties
+          sed -i -e 's/-B/-B -DskipTests=true/g' builder-compose.yml
+          docker-compose -f builder-compose.yml run builder
+          docker-compose -f docker-compose-dev.yml up -d
+          while ! curl -skfail https://localhost.emobix.co.uk:8443/api/runner/available >/dev/null; do sleep 2; done
+        working-directory: ./conformance-suite
+      - run: git clone --single-branch --branch v4.x https://github.com/panva/openid-client-fapi-certification.git runner
+      - uses: actions/setup-node@v1
+        with:
+          node-version: 12
+      - run: npx panva/npm-install-retry
+        working-directory: ./runner
+      - run: npm install ${{ github.repository }}#${{ github.sha }}
+        working-directory: ./runner
+      - name: run mtls variant
+        run: npm run test
+        working-directory: ./runner
+        env:
+          NODE_TLS_REJECT_UNAUTHORIZED: 0
+          DEBUG: runner,fapi-rw-id2-*
+          VARIANT: '{"client_auth_type":"mtls","fapi_profile":"plain_fapi"}'
+          SUITE_BASE_URL: https://localhost.emobix.co.uk:8443
+      - name: run private_key_jwt variant
+        run: npm run test
+        working-directory: ./runner
+        env:
+          NODE_TLS_REJECT_UNAUTHORIZED: 0
+          DEBUG: runner,fapi-rw-id2-*
+          VARIANT: '{"client_auth_type":"private_key_jwt","fapi_profile":"plain_fapi"}'
+          SUITE_BASE_URL: https://localhost.emobix.co.uk:8443
