@@ -1,12 +1,12 @@
-import { IncomingMessage } from 'http';
 import { generateKeyPairSync } from 'crypto';
-
-import { JWKECKey } from 'jose'
-
-import { custom, generators, Issuer, Client, Strategy, StrategyVerifyCallback, StrategyOptions, TokenSet, RegisterOther, IssuerMetadata } from './index.d';
+import * as http from 'http';
+import { JWKECKey } from 'jose';
 import passport from 'passport';
+import { Client, custom, generators, Issuer, IssuerMetadata, RegisterOther, Strategy, StrategyOptions, StrategyVerifyCallback, TokenSet } from './index.d';
 
-async (req: IncomingMessage) => {
+
+
+async (req: http.IncomingMessage) => {
     // Custom HTTP options on the `Issuer` _c'tor_ (e.g. used for `Issuer.discover()`):
     Issuer[custom.http_options] = options => {
         console.log(options.followRedirect, options.timeout, options.retry);
